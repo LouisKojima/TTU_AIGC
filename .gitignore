@@ -1,0 +1,15 @@
+#
+# Only track C# scripts in this folder; ignore everything else
+#
+
+# Ignore everything by default
+*
+
+# Allow directories so we can unignore specific files
+!*/
+
+# Track C# scripts
+!*.cs
+
+# Ensure this .gitignore can be tracked
+!.gitignore
