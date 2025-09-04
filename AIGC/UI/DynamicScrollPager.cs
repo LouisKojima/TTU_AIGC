@@ -35,6 +35,12 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
     public float snapDuration = 0.25f; // 吸附动画时长
     private bool isDragging = false;
 
+// 与 loadedSprites 一一对应的文件完整路径或文件名（例如 ".../StreamingAssets/.../foo.png"）
+    [SerializeField]
+    private List<string> loadedFileNames = new List<string>();
+
+    public SkyboxItemGroup itemGroup;
+
     void Start()
     {
         StartCoroutine(LoadImagesAndBuild());
@@ -63,6 +69,7 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
 
         // 清空已有数据
         loadedSprites.Clear();
+        loadedFileNames.Clear();
 
         string[] files = Directory.GetFiles(folderPath, "*.png");
         foreach (string file in files)
@@ -79,6 +86,7 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
                     Texture2D tex = DownloadHandlerTexture.GetContent(uwr);
                     Sprite sp = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
                     loadedSprites.Add(sp);
+                    loadedFileNames.Add(file);
                 }
             }
         }
@@ -86,74 +94,104 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
         BuildPages();
     }
 
-    /// <summary>
-    /// 构建 Scroll View 页面
-    /// </summary>
-    void BuildPages()
+void BuildPages()
+{
+    // 清理旧内容
+    foreach (Transform child in content) Destroy(child.gameObject);
+    foreach (Transform dot in paginationContainer) Destroy(dot.gameObject);
+    dots.Clear();
+    selectedIndex = -1;
+
+    int total = loadedSprites.Count;
+    pageCount = Mathf.CeilToInt((float)total / itemsPerPage);
+
+    // Content 尺寸
+    float vpW = viewport.rect.width;
+    float vpH = viewport.rect.height;
+    content.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, pageCount * vpW);
+    content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, vpH);
+
+    var group = itemGroup;
+    if (group == null)
     {
-        // 清理旧内容
-        foreach (Transform child in content) Destroy(child.gameObject);
-        foreach (Transform dot in paginationContainer) Destroy(dot.gameObject);
-        dots.Clear();
-        selectedIndex = -1;
+        Debug.LogError("[DynamicScrollPager] itemGroup 未设置。请在 Inspector 把 SkyboxItemGroup 拖到此字段。");
+    }
+    else
+    {
+        // 如需重建时清空历史注册，可放开
+        // group.Clear();
+    }
 
-        int total = loadedSprites.Count;
-        pageCount = Mathf.CeilToInt((float)total / itemsPerPage);
-
-        // 设置 Content 尺寸
-        float vpW = viewport.rect.width;
-        float vpH = viewport.rect.height;
-        content.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, pageCount * vpW);
-        content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, vpH);
-
-        // 构建页面
-        for (int p = 0; p < pageCount; p++)
+    // 构建页面
+    for (int p = 0; p < pageCount; p++)
+    {
+        GameObject page = Instantiate(pagePrefab, content);
+        var le = page.GetComponent<LayoutElement>();
+        if (le != null)
         {
-            GameObject page = Instantiate(pagePrefab, content);
-            var le = page.GetComponent<LayoutElement>();
-            if (le != null)
+            le.preferredWidth = vpW;
+            le.preferredHeight = vpH;
+        }
+
+        // 填充 item
+        for (int i = 0; i < itemsPerPage; i++)
+        {
+            int idx = p * itemsPerPage + i;
+            if (idx >= total) break;
+
+            GameObject item = Instantiate(itemPrefab, page.transform);
+            item.name = $"Item_{idx}";
+
+            // 缩略图
+            var thumb = item.GetComponentInChildren<Image>();
+            if (thumb) thumb.sprite = loadedSprites[idx];
+
+            //关键：拿到 SkyboxItem 脚本
+            var skyboxItem = item.GetComponent<SkyboxItem>();
+            if (skyboxItem == null)
             {
-                le.preferredWidth = vpW;
-                le.preferredHeight = vpH;
+                Debug.LogError($"[DynamicScrollPager] ItemPrefab 缺少 SkyboxItem 组件：{item.name}");
             }
-
-            // 填充 item
-            for (int i = 0; i < itemsPerPage; i++)
+            else
             {
-                int idx = p * itemsPerPage + i;
-                if (idx >= total) break;
+                // 写入该项的 png 文件名
+                string fileName = null;
+                if (loadedFileNames != null && idx < loadedFileNames.Count && !string.IsNullOrEmpty(loadedFileNames[idx]))
+                    fileName = Path.GetFileName(loadedFileNames[idx]);
+                skyboxItem.fileNameInStreamingAssets = fileName;
 
-                GameObject item = Instantiate(itemPrefab, page.transform);
-                var thumb = item.GetComponentInChildren<Image>();
-                if (thumb) thumb.sprite = loadedSprites[idx];
+                // 注册到分组（互斥选中）
+                if (group != null) group.Register(skyboxItem);
 
-                int captured = idx;
+                // 明确把点击绑定到分组选中（双保险，不依赖 Awake 里是否已绑）
                 var btn = item.GetComponent<Button>();
-                if (btn)
+                if (btn != null && group != null)
                 {
                     btn.onClick.RemoveAllListeners();
-                    btn.onClick.AddListener(() => OnItemClicked(captured));
+                    btn.onClick.AddListener(() => group.Select(skyboxItem));
                 }
             }
         }
-
-        // 生成分页指示器
-        for (int i = 0; i < pageCount; i++)
-        {
-            GameObject dot = new GameObject("Dot_" + i, typeof(RectTransform), typeof(Image));
-            dot.transform.SetParent(paginationContainer, false);
-            var img = dot.GetComponent<Image>();
-            img.sprite = dotInactiveSprite;
-            img.rectTransform.sizeDelta = new Vector2(16, 6);
-            dots.Add(img);
-        }
-
-        UpdateDots(0);
-
-        // 重置滚动
-        content.anchoredPosition = Vector2.zero;
-        currentPage = 0;
     }
+
+    // 分页指示器
+    for (int i = 0; i < pageCount; i++)
+    {
+        GameObject dot = new GameObject("Dot_" + i, typeof(RectTransform), typeof(Image));
+        dot.transform.SetParent(paginationContainer, false);
+        var img = dot.GetComponent<Image>();
+        img.sprite = dotInactiveSprite;
+        img.rectTransform.sizeDelta = new Vector2(50, 15);
+        dots.Add(img);
+    }
+
+    UpdateDots(0);
+
+    // 重置滚动
+    content.anchoredPosition = Vector2.zero;
+    currentPage = 0;
+}
+
 
     /// <summary>
     /// 点击缩略图：第一次点击选中，再次点击应用
