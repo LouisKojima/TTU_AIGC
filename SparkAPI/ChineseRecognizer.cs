@@ -22,8 +22,14 @@ public class ChineseRecognizer : MonoBehaviour
 {
     private string appId = "31521874";
     private string appKey = "EMGxp0mmk49jiWjm1QZpGjrG";
-    //private string devPid = "15372";      // Chinese
-    private string devPid = "1737";      // English
+    // 在 Inspector 中可切换识别语言（会映射到不同的 dev_pid）
+    public enum AsrLanguage
+    {
+        Mandarin = 15372,
+        English = 17372
+    }
+    [FoldoutGroup("Settings")]
+    public AsrLanguage language = AsrLanguage.English;
     private string uri = "ws://vop.baidu.com/realtime_asr";
     private WebSocket websocket;
 
@@ -282,24 +288,54 @@ public class ChineseRecognizer : MonoBehaviour
 
     private void SendStartParams()
     {
-        var req = new
+        // Ensure numeric types where required by the API (appid/dev_pid/sample)
+        long appIdNum = 0;
+        if (!long.TryParse(appId, out appIdNum))
         {
-            type = "START",
-            data = new
+            Debug.LogWarning($"[ChineseRecognizer] appId '{appId}' is not numeric. Using 0 as fallback.");
+        }
+
+        int devPidNum = (int)language;
+
+        var req = new StartFrame
+        {
+            Type = "START",
+            Data = new StartData
             {
-                appid = appId,
-                appkey = appKey,
-                dev_pid = devPid,
-                cuid = "yourself_defined_user_id",
-                sample = sampleRate,
-                format = "pcm"
+                AppId = appIdNum,
+                AppKey = appKey,
+                DevPid = devPidNum,
+                Cuid = "yourself_defined_user_id",
+                Sample = sampleRate,
+                Format = "pcm"
             }
         };
 
-        string body = JsonConvert.SerializeObject(req);
-        string testBody = "{\"type\": \"START\", \"data\": {\"appid\": 31521874, \"appkey\": \"EMGxp0mmk49jiWjm1QZpGjrG\", \"dev_pid\": 17372, \"cuid\": \"yourself_defined_user_id\", \"sample\": 16000, \"format\": \"pcm\"}}";
-        websocket.Send(testBody);
+        var jsonSettings = new JsonSerializerSettings
+        {
+            NullValueHandling = NullValueHandling.Ignore
+        };
+
+        string body = JsonConvert.SerializeObject(req, jsonSettings);
+        websocket.Send(body);
         Debug.Log("Sent START frame with params: " + body);
+    }
+
+    // Strongly-typed payloads to ensure correct JSON field names and types
+    private class StartFrame
+    {
+        [JsonProperty("type")] public string Type { get; set; }
+        [JsonProperty("data")] public StartData Data { get; set; }
+    }
+
+    private class StartData
+    {
+        [JsonProperty("appid")] public long AppId { get; set; }
+        [JsonProperty("appkey")] public string AppKey { get; set; }
+        [JsonProperty("dev_pid")] public int DevPid { get; set; }
+        [JsonProperty("cuid")] public string Cuid { get; set; }
+        [JsonProperty("sample")] public int Sample { get; set; }
+        [JsonProperty("format")] public string Format { get; set; }
     }
 
 
