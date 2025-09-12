@@ -34,8 +34,8 @@ public class PathFollowerCopies : PathFollower
         otherCopies.ForEach(x => DestroyImmediate(x));
     }
 
-    [OnValueChanged(nameof(ApplyPathLocation))]
-    public float distanceTravelled;
+    // 使用基类 PathFollower.distanceTravelled，避免与基类同名字段重复被序列化导致的告警。
+    // 在编辑器中通过 OnValidate 触发刷新来替代 OnValueChanged 行为。
 
     void Start()
     {
@@ -43,6 +43,14 @@ public class PathFollowerCopies : PathFollower
         {
             // Subscribed to the pathUpdated event so that we're notified if the path changes during the game
             pathCreator.pathUpdated += OnPathChanged;
+        }
+    }
+
+    void OnValidate()
+    {
+        if (pathCreator != null)
+        {
+            ApplyPathLocation();
         }
     }
 
