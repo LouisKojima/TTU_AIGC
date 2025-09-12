@@ -55,7 +55,7 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
     }
 
     /// <summary>
-    /// 扫描文件夹，加载 PNG，生成 Sprite
+    /// 扫描文件夹，加载 PNG 和 JPG，生成 Sprite
     /// </summary>
     IEnumerator LoadImagesAndBuild()
     {
@@ -71,7 +71,10 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
         loadedSprites.Clear();
         loadedFileNames.Clear();
 
-        string[] files = Directory.GetFiles(folderPath, "*.png");
+        var files = new List<string>();
+        files.AddRange(Directory.GetFiles(folderPath, "*.png"));
+        files.AddRange(Directory.GetFiles(folderPath, "*.jpg"));
+
         foreach (string file in files)
         {
             using (UnityWebRequest uwr = UnityWebRequestTexture.GetTexture("file://" + file))

@@ -37,6 +37,59 @@ public class SkyboxController : MonoBehaviour
         StartCoroutine(LoadAndApply(fullPath));
     }
 
+    /// <summary>
+    /// Button 触发：在 StreamingAssets/<relativeFolder> 下查找最新的一张图片并应用为天空盒。
+    /// 依据文件的 LastWriteTimeUtc 选择最新；支持 .png/.jpg/.jpeg。
+    /// </summary>
+    public void ApplyLatestFromStreamingAssets()
+    {
+        string folder = Path.Combine(Application.streamingAssetsPath, relativeFolder ?? string.Empty);
+        if (!Directory.Exists(folder))
+        {
+            Debug.LogWarning("[SkyboxController] 目录不存在: " + folder);
+            return;
+        }
+
+        string latest = FindLatestImagePath(folder);
+        if (string.IsNullOrEmpty(latest))
+        {
+            Debug.LogWarning("[SkyboxController] 未找到可用图片 (.png/.jpg/.jpeg)");
+            return;
+        }
+
+        Debug.Log("[SkyboxController] 应用最新天空盒: " + latest);
+        StartCoroutine(LoadAndApply(latest));
+    }
+
+    private static string FindLatestImagePath(string folder)
+    {
+        try
+        {
+            var exts = new string[] { ".png", ".jpg", ".jpeg" };
+            string latest = null;
+            System.DateTime latestTime = System.DateTime.MinValue;
+
+            foreach (var file in Directory.GetFiles(folder))
+            {
+                var ext = Path.GetExtension(file).ToLowerInvariant();
+                if (System.Array.IndexOf(exts, ext) < 0) continue;
+                var info = new FileInfo(file);
+                var t = info.LastWriteTimeUtc;
+                if (t > latestTime)
+                {
+                    latestTime = t;
+                    latest = file;
+                }
+            }
+            return latest;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning("[SkyboxController] 查找最新图片失败: " + ex.Message);
+            return null;
+        }
+    }
+
     private IEnumerator LoadAndApply(string fullPath)
     {
         Debug.Log($"[SkyboxController] LoadAndApply fullPath={fullPath}");
