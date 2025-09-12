@@ -41,6 +41,14 @@
   - When touching runtime + tests + docs, prefer distinct commits: `feat:` (runtime), `test:` (tests), `docs:` (notes).
 - PRs: clear description, linked issue, steps to test, and Editor/Play screenshots or short clips. Include any performance notes and known limitations.
 
+## Agent Workflow & Approvals
+
+- Do NOT run `git commit` or `git push` without explicit user approval.
+- Default flow: prepare changes in working tree, share a concise diff/summary, and wait for review/approval.
+- When approved, prefer pushing to a feature branch (e.g., `feature/<topic>`) and open a PR instead of pushing directly to `main`.
+- Group commits by feature as above; avoid mixing unrelated changes in one commit.
+- For potentially disruptive actions (history rewrite, force-push, deletes), always ask first and document rationale.
+
 ## Security & Configuration Tips
 - Unity version: keep in sync with `ProjectSettings/ProjectVersion.txt`.
 - Do not commit `Library/`, `Temp/`, or build outputs. Keep large binaries in `Assets/IAV` organized and referenced.
