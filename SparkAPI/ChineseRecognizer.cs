@@ -72,6 +72,7 @@ public class ChineseRecognizer : MonoBehaviour
     [DisplayAsString]
     private bool hasReply = false;
     private bool hasReplyOld = false;
+    private bool finishSent = false;
 
     // Start is called before the first frame update
     void Start()
@@ -94,6 +95,7 @@ public class ChineseRecognizer : MonoBehaviour
         //if (replyText) replyText.enabled = false;
 
         ConnectWebSocket();
+        finishSent = false;
     }
 
     private void OnDisable()
@@ -317,8 +319,15 @@ public class ChineseRecognizer : MonoBehaviour
         };
 
         string body = JsonConvert.SerializeObject(req, jsonSettings);
-        websocket.Send(body);
-        Debug.Log("Sent START frame with params: " + body);
+        if (websocket != null && websocket.ReadyState == WebSocketState.Open)
+        {
+            try { websocket.Send(body); Debug.Log("Sent START frame with params: " + body); }
+            catch (Exception ex) { Debug.LogWarning("[ChineseRecognizer] START send failed: " + ex.Message); }
+        }
+        else
+        {
+            Debug.LogWarning("[ChineseRecognizer] START skipped: WebSocket not open");
+        }
     }
 
     // Strongly-typed payloads to ensure correct JSON field names and types
@@ -499,7 +508,27 @@ public class ChineseRecognizer : MonoBehaviour
             type = "FINISH"
         };
         string body = JsonConvert.SerializeObject(req);
-        websocket.Send(body);
-        Debug.Log("Sent FINISH frame");
+        if (finishSent)
+        {
+            Debug.Log("[ChineseRecognizer] FINISH already sent; skip.");
+            return;
+        }
+        if (websocket != null && websocket.ReadyState == WebSocketState.Open)
+        {
+            try
+            {
+                websocket.Send(body);
+                finishSent = true;
+                Debug.Log("Sent FINISH frame");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ChineseRecognizer] FINISH send failed: " + ex.Message);
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[ChineseRecognizer] FINISH skipped: WebSocket not open");
+        }
     }
 }
