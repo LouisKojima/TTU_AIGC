@@ -41,6 +41,7 @@ namespace IAV.AIGC.API
             public string prompt;
             public string negative_text;
             public int skybox_style_id;
+            public bool enhance_prompt;
         }
 
         [Serializable]
@@ -70,7 +71,8 @@ namespace IAV.AIGC.API
             {
                 prompt = prompt,
                 negative_text = string.IsNullOrEmpty(negativeText) ? null : negativeText,
-                skybox_style_id = styleId
+                skybox_style_id = styleId,
+                enhance_prompt = true
             };
             var json = JsonUtility.ToJson(payload);
             var url = CombineUrl(_apiBaseUrl, "/skybox");
