@@ -23,7 +23,7 @@ public class NLPAnalyzer : MonoBehaviour
 
     // Double Mode: Command or Chat
     public enum DualMode { COMMAND, CHAT };
-    const string commandPrompt = "Suppose you are one AI voice assistant inside a car. Your task is to recommend corresponding ambient light colors and songs based on the scenarios, events, or moods I describe. Make sure that the colors and songs you choose have a logical relationship with my narration. I will provide the current list of songs in the car, and their genre tags will be given with angle brackets. The current music library in my car includes the songs with these song indexes : (index=0 Eagles - The Hotel California<Rock>), (index=1 Mariah Carey - All I Want for Christmas Is You<Christmas>),(index=2 OneRepublic - Counting Stars<Pop>),(index=3 David Tao - Melody<Chinese><Classic>),(index=4 Adele - Someone Like You<Sad><Love Song>),(index=5 Andreas Bourani - Auf uns<Dynamic><World Cup>),(index=6 Beyoncé - Love On Top<Cheerful><Love Song>),(index=7 Jon & Valerie Guerra - Edelweiss<Classic>),(index=8 Lena - Lost In You<German><Pop>).. Please adhere to the following response rules: First output a JSON format of the recommended color in HEX value format, and then output the recommended song index. You should recommend the ambient color and music based on my request in JSON format. Your whole response example should be like: {\"color\": <color HEX you recommend based on the scenario>, \"index\": <index of the song from the current library you recommend>} .Now my current request is :";
+    const string commandPrompt = "Suppose you are one AI voice assistant inside a car. Your task is to recommend corresponding ambient light colors and songs based on the scenarios, events, or moods I describe. Make sure that the colors and songs you choose have a logical relationship with my narration. I will provide the current list of songs in the car, and their genre tags will be given with angle brackets. The current music library in my car includes the songs with these song indexes : (index=0 Eagles - The Hotel California<Rock>), (index=1 Mariah Carey - All I Want for Christmas Is You<Christmas>),(index=2 OneRepublic - Counting Stars<Pop>),(index=3 David Tao - Melody<Chinese><Classic>),(index=4 Adele - Someone Like You<Sad><Love Song>),(index=5 Andreas Bourani - Auf uns<Dynamic><World Cup>),(index=6 Beyoncé - Love On Top<Cheerful><Love Song>),(index=7 Jon & Valerie Guerra - Edelweiss<Classic>),(index=8 Lena - Lost In You<German><Pop>).. Please adhere to the following response rules: Output a JSON format of the recommended color in HEX value format, and then output the recommended song index. You should recommend the ambient color and music based on my request in JSON format. Your whole response example should be like: {\"color\": <color HEX you recommend based on the scenario>, \"index\": <index of the song from the current library you recommend>} and do not add any explanations for it. Your whole response should be JSON format. Now my current request is :";
     const string chatPrompt = "Suppose you are one AI voice assistant inside a car. Your task is to respond to user input with concise and brief response. My current request is:";
     [FoldoutGroup("ColorRefs")]
     public ColorCtrl colorCtrl;
@@ -118,15 +118,36 @@ public class NLPAnalyzer : MonoBehaviour
 
     private bool ActionParser(string json, string reason)
     {
-        // First let json get parsed
-        JsonCommand jsonCommand = JsonUtility.FromJson<JsonCommand>(json);
-        if (jsonCommand.color != "")
+        // First let json get parsed (defensive)
+        if (string.IsNullOrEmpty(json))
         {
-            AmbientColorChange(jsonCommand.color);
+            Debug.LogWarning("[NLPAnalyzer] ActionParser received empty JSON, skip actions.");
+            return false;
         }
-        if (jsonCommand.index != -1)
+        try
         {
-            PlayMusic(jsonCommand.index);
+            JsonCommand jsonCommand = JsonUtility.FromJson<JsonCommand>(json);
+            if (jsonCommand != null)
+            {
+                if (!string.IsNullOrEmpty(jsonCommand.color))
+                {
+                    AmbientColorChange(jsonCommand.color);
+                }
+                if (jsonCommand.index != -1)
+                {
+                    PlayMusic(jsonCommand.index);
+                }
+            }
+            else
+            {
+                Debug.LogWarning("[NLPAnalyzer] Parsed JsonCommand is null. Skip actions.");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[NLPAnalyzer] ActionParser JSON parse failed: {ex.Message}. Skip actions.");
+            return false;
         }
         return true;
     }
@@ -150,13 +171,18 @@ public class NLPAnalyzer : MonoBehaviour
     private void ExtractJson(string input, out string json, out string reason)
     {
         int bracketCount = 0;
-        int jsonEndIndex = 0;
+        int jsonStartIndex = -1;
+        int jsonEndIndex = -1;
 
         // 遍历输入字符串，找到完整的 JSON 对象的结尾
         for (int i = 0; i < input.Length; i++)
         {
             if (input[i] == '{')
             {
+                if (bracketCount == 0)
+                {
+                    jsonStartIndex = i;
+                }
                 bracketCount++;
             }
             else if (input[i] == '}')
@@ -171,21 +197,40 @@ public class NLPAnalyzer : MonoBehaviour
         }
 
         // 截取 JSON 和其他内容
-        json = input.Substring(0, jsonEndIndex);
+        if (jsonStartIndex < 0 || jsonEndIndex <= jsonStartIndex)
+        {
+            Debug.LogWarning("[NLPAnalyzer] No valid JSON detected in LLM response. Using safe defaults.");
+            json = "{\"index\":-1}";
+            reason = defaultReasonResponse;
+            return;
+        }
+        json = input.Substring(jsonStartIndex, jsonEndIndex - jsonStartIndex);
 
-        // Get music name from index
-        JsonCommand jsonCommand = JsonUtility.FromJson<JsonCommand>(json);
-        string musicName = musicPlayer.GetTrackNameByIndex(jsonCommand.index);
-        reason = "I recommend this color and music " + musicName + " according to your request";
+        // Get music name from index (defensive)
+        try
+        {
+            JsonCommand jsonCommand = JsonUtility.FromJson<JsonCommand>(json);
+            string musicName = (musicPlayer != null) ? musicPlayer.GetTrackNameByIndex(jsonCommand.index) : string.Empty;
+            reason = !string.IsNullOrEmpty(musicName)
+                ? ("I recommend this color and music " + musicName + " according to your request")
+                : defaultReasonResponse;
 
-        // 打印结果
-        Debug.Log("JSON Segment: " + json);
+            // 打印结果
+            Debug.Log("JSON Segment: " + json);
+        }
+        catch (Exception ex)
+        {
+            // Fallback when JSON is invalid or incomplete
+            Debug.LogWarning("[NLPAnalyzer] JSON parse failed: " + ex.Message + ". Falling back to safe defaults.");
+            json = "{\"index\":-1}";
+            reason = defaultReasonResponse;
+        }
     }
 
     private class JsonCommand
     {
         public string color;
-        public int index;
+        public int index = -1;
     }
 
     /////////////////////////////////// Color Change Action Related //////////////////////////////
