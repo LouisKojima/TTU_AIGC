@@ -133,6 +133,19 @@ public class SkyboxController : MonoBehaviour
 
             skyboxMaterial.SetTexture(texturePropertyName, tex);
 
+            // Normalize skybox material parameters to desired defaults
+            // Tint Color = #CFCFCF, Exposure = 0.7 (when properties exist)
+            const string tintProp = "_Tint";
+            const string exposureProp = "_Exposure";
+            if (skyboxMaterial.HasProperty(tintProp))
+            {
+                skyboxMaterial.SetColor(tintProp, new Color32(0xCF, 0xCF, 0xCF, 0xFF));
+            }
+            if (skyboxMaterial.HasProperty(exposureProp))
+            {
+                skyboxMaterial.SetFloat(exposureProp, 0.7f);
+            }
+
             // 确保当前环境使用该材质（若已设置可省略）
             if (RenderSettings.skybox != skyboxMaterial)
                 RenderSettings.skybox = skyboxMaterial;
