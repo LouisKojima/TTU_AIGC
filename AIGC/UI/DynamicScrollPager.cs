@@ -29,6 +29,8 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
     private int currentPage = 0;
     private int pageCount = 0;
     private List<Image> dots = new();
+    private bool _pendingRebuild = false;  // 组件未激活时记录需要在激活后重建
+    private bool _pendingRefresh = false;  // 延后执行全量刷新
 
     [Header("Paging Settings")]
     [Range(0.1f, 1f)]
@@ -46,12 +48,35 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
         StartCoroutine(LoadImagesAndBuild());
     }
 
+    void OnEnable()
+    {
+        if (_pendingRefresh)
+        {
+            _pendingRefresh = false;
+            StartCoroutine(LoadImagesAndBuild());
+            return;
+        }
+        if (_pendingRebuild)
+        {
+            _pendingRebuild = false;
+            BuildPages();
+        }
+    }
+
     /// <summary>
     /// 刷新 ScrollView（运行时可调用，支持未来新增的 AIGC 资源）
     /// </summary>
     public void Refresh()
     {
-        StartCoroutine(LoadImagesAndBuild());
+        if (isActiveAndEnabled)
+        {
+            StartCoroutine(LoadImagesAndBuild());
+        }
+        else
+        {
+            // ScrollView 未激活时，延迟刷新避免 StartCoroutine 报错
+            _pendingRefresh = true;
+        }
     }
 
     /// <summary>
@@ -74,10 +99,16 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
         var files = new List<string>();
         files.AddRange(Directory.GetFiles(folderPath, "*.png"));
         files.AddRange(Directory.GetFiles(folderPath, "*.jpg"));
+        files.AddRange(Directory.GetFiles(folderPath, "*.jpeg"));
+
+        // 按最后修改时间倒序，最新的优先显示在前面
+        files.Sort((a, b) => System.IO.File.GetLastWriteTimeUtc(b).CompareTo(System.IO.File.GetLastWriteTimeUtc(a)));
 
         foreach (string file in files)
         {
-            using (UnityWebRequest uwr = UnityWebRequestTexture.GetTexture("file://" + file))
+            // 规范 file:// URI，避免不同平台的路径分隔符问题
+            string uri = new System.Uri(file).AbsoluteUri; // 例如 file:///D:/...
+            using (UnityWebRequest uwr = UnityWebRequestTexture.GetTexture(uri))
             {
                 yield return uwr.SendWebRequest();
                 if (uwr.result != UnityWebRequest.Result.Success)
@@ -95,6 +126,63 @@ public class DynamicScrollPager : MonoBehaviour, IBeginDragHandler, IEndDragHand
         }
 
         BuildPages();
+    }
+
+    /// <summary>
+    /// 接入一张新生成的天空盒预览（避免全量扫描）。可在未激活时调用。
+    /// </summary>
+    public void AcceptNewImage(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath) || !File.Exists(fullPath))
+        {
+            Debug.LogWarning("[DynamicScrollPager] AcceptNewImage: 文件不存在: " + fullPath);
+            return;
+        }
+
+        string ext = Path.GetExtension(fullPath).ToLowerInvariant();
+        if (ext != ".png" && ext != ".jpg" && ext != ".jpeg")
+        {
+            Debug.LogWarning("[DynamicScrollPager] AcceptNewImage: 不支持的扩展名: " + ext);
+            return;
+        }
+
+        try
+        {
+            byte[] bytes = File.ReadAllBytes(fullPath);
+            if (bytes == null || bytes.Length == 0)
+            {
+                Debug.LogWarning("[DynamicScrollPager] AcceptNewImage: 文件为空: " + fullPath);
+                return;
+            }
+
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (!tex.LoadImage(bytes))
+            {
+                Debug.LogWarning("[DynamicScrollPager] AcceptNewImage: 纹理解析失败: " + fullPath);
+                return;
+            }
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+
+            var sp = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+
+            // 插入到列表开头（最新优先）
+            loadedSprites.Insert(0, sp);
+            loadedFileNames.Insert(0, fullPath);
+
+            if (isActiveAndEnabled)
+            {
+                BuildPages();
+            }
+            else
+            {
+                _pendingRebuild = true;
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning("[DynamicScrollPager] AcceptNewImage 失败: " + ex.Message);
+        }
     }
 
 void BuildPages()
