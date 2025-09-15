@@ -22,6 +22,16 @@ public class PlanarReflection : MonoBehaviour
     [Tooltip("材质中用于接收反射贴图的属性名")]  
     public string textureProperty = "_RefTexture";
 
+    [Header("Distance Blur (Mipmaps)")]
+    [Tooltip("启用基于距离的模糊效果（使用反射 RT 的 Mipmap 与三线性过滤）")]
+    public bool enableDistanceBlur = true;
+    [Tooltip("对采样的全局 Mip 偏移。>0 更模糊，<0 更锐利。")]
+    [Range(-2f, 2f)] public float mipMapBias = 0f;
+    [Tooltip("反射贴图过滤模式（建议 Trilinear）")]
+    public FilterMode filterMode = FilterMode.Trilinear;
+    [Tooltip("各向异性等级（0-16）。较低值在远处更模糊，较高值更清晰。")]
+    [Range(0, 16)] public int anisoLevel = 0;
+
     Camera _reflectionCamera;
     RenderTexture _reflectionRT;
     Renderer _renderer;
@@ -52,6 +62,18 @@ public class PlanarReflection : MonoBehaviour
 
         UpdateCameraProperties();
         _reflectionCamera.Render();
+
+        // 如果已启用自动 Mip 生成，则无需手动生成
+        if (enableDistanceBlur && _reflectionRT && _reflectionRT.useMipMap && _reflectionRT.autoGenerateMips)
+        {
+            return;
+        }
+
+        // 生成 Mipmap，便于距离越远采样更高 Mip，形成自然的远处模糊
+        if (enableDistanceBlur && _reflectionRT && _reflectionRT.useMipMap)
+        {
+            try { _reflectionRT.GenerateMips(); } catch { /* 某些平台会自动生成 */ }
+        }
     }
 
     #region Setup
@@ -77,7 +99,7 @@ public class PlanarReflection : MonoBehaviour
     {
         int width = Mathf.FloorToInt(Screen.width * textureScale);
         int height = Mathf.FloorToInt(Screen.height * textureScale);
-        if (_reflectionRT && (_reflectionRT.width != width || _reflectionRT.height != height))
+        if (_reflectionRT && (_reflectionRT.width != width || _reflectionRT.height != height || _reflectionRT.useMipMap != enableDistanceBlur))
         {
             _reflectionRT.Release();
             DestroyImmediate(_reflectionRT);
@@ -88,11 +110,38 @@ public class PlanarReflection : MonoBehaviour
             _reflectionRT = new RenderTexture(width, height, 16, RenderTextureFormat.DefaultHDR)
             {
                 name = "PlanarReflectionRT",
-                hideFlags = HideFlags.HideAndDontSave
+                hideFlags = HideFlags.HideAndDontSave,
+                useMipMap = enableDistanceBlur,
+                autoGenerateMips = enableDistanceBlur
             };
+            _reflectionRT.wrapMode = TextureWrapMode.Clamp;
+            _reflectionRT.filterMode = filterMode;
+            _reflectionRT.anisoLevel = anisoLevel;
+            _reflectionRT.mipMapBias = mipMapBias;
+        }
+        else
+        {
+            // 同步运行时可变参数
+            _reflectionRT.filterMode = filterMode;
+            _reflectionRT.anisoLevel = anisoLevel;
+            _reflectionRT.mipMapBias = mipMapBias;
         }
     }
     #endregion
+
+    void OnValidate()
+    {
+        // 在编辑器中参数变更时，同步更新 RT 配置
+        if (!Application.isPlaying)
+        {
+            _renderer = GetComponent<Renderer>();
+        }
+        UpdateRenderTexture();
+        if (_renderer && _reflectionRT)
+        {
+            _renderer.sharedMaterial.SetTexture(textureProperty, _reflectionRT);
+        }
+    }
 
     #region Camera Update
     void UpdateCameraProperties()
