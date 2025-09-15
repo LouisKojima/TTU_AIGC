@@ -104,10 +104,11 @@ namespace IAV.AIGC.API
                     // 下载完成后切换状态为 Generated
                     SkyboxPopupStateController.SetState(IAV.AIGC.AIGCCreateState.Generated);
 
-                    // 通知 UI 刷新（可选）
+                    // 通知 UI 刷新/接入新增（可选）
                     if (_scrollPagerToRefresh != null)
                     {
-                        _scrollPagerToRefresh.Refresh();
+                        // 更稳健：直接把新图片注入到分页数据，避免未激活时协程刷新失败
+                        _scrollPagerToRefresh.AcceptNewImage(fullPath);
                     }
 
                     // 事件回调
