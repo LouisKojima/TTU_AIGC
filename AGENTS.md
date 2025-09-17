@@ -43,7 +43,7 @@
 
 ## Agent Workflow & Approvals
 
-- Do NOT run `git commit` or `git push` without explicit user approval.
+- 可以执行 `git commit` 和 `git push`，但必须事先获得用户明确同意或在用户要求时才进行。
 - 在整理日志、总结或回复变更说明时，请尽量使用中文解释已完成的工作和后续建议步骤，方便团队理解。
 - Default flow: prepare changes in working tree, share a concise diff/summary, and wait for review/approval.
 - When approved, prefer pushing to a feature branch (e.g., `feature/<topic>`) and open a PR instead of pushing directly to `main`.
