@@ -52,6 +52,11 @@ public class ASRFromBaidu : MonoBehaviour
     [DisplayAsString]
     public int silentChunks = 30;
     private bool finishSent = false;
+    private readonly object transcriptLock = new();
+    private readonly List<string> confirmedSegments = new();
+    private readonly Dictionary<string, int> finalizedSnToIndex = new();
+    private string currentPartial = string.Empty;
+    public string AggregatedText { get; private set; } = string.Empty;
     // Current text can be read from receivedMsg.result by other modules
     // public float volume;
     // UI flags removed
@@ -64,6 +69,8 @@ public class ASRFromBaidu : MonoBehaviour
     private void OnEnable()
     {
         silentChunks = startSilentChunks;
+
+        ResetTranscriptState();
 
         receivedMsg.Clear();
         finishSent = false;
@@ -90,6 +97,18 @@ public class ASRFromBaidu : MonoBehaviour
     public void ClearMsg()
     {
         receivedMsg = new();
+        ResetTranscriptState();
+    }
+
+    private void ResetTranscriptState()
+    {
+        lock (transcriptLock)
+        {
+            confirmedSegments.Clear();
+            finalizedSnToIndex.Clear();
+            currentPartial = string.Empty;
+            AggregatedText = string.Empty;
+        }
     }
 
     private void ConnectWebSocket()
@@ -108,7 +127,7 @@ public class ASRFromBaidu : MonoBehaviour
             Debug.Log("Received: " + e.Data);
             receivedMsg.Clear();
             receivedMsg.PraseString(e.Data);
-            
+            UpdateAggregatedTranscript();
         };
 
         websocket.OnClose += (sender, e) =>
@@ -129,6 +148,73 @@ public class ASRFromBaidu : MonoBehaviour
     // private bool activeInHierarchy => gameObject.activeInHierarchy;
 
     // LLM/TTS流程移除，保留 ASR 文本（可由其他模块消费）
+
+    private void UpdateAggregatedTranscript()
+    {
+        lock (transcriptLock)
+        {
+            switch (receivedMsg.type)
+            {
+                case BDMessage.BDMessageType.MID_TEXT:
+                    currentPartial = receivedMsg.result ?? string.Empty;
+                    break;
+                case BDMessage.BDMessageType.FIN_TEXT:
+                    string finalized = (receivedMsg.result ?? string.Empty).Trim();
+                    string sn = receivedMsg.sn ?? string.Empty;
+                    if (!string.IsNullOrEmpty(sn))
+                    {
+                        if (finalizedSnToIndex.TryGetValue(sn, out int existingIndex))
+                        {
+                            if (!string.IsNullOrEmpty(finalized))
+                            {
+                                confirmedSegments[existingIndex] = finalized;
+                            }
+                        }
+                        else if (!string.IsNullOrEmpty(finalized))
+                        {
+                            finalizedSnToIndex[sn] = confirmedSegments.Count;
+                            confirmedSegments.Add(finalized);
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(finalized))
+                    {
+                        confirmedSegments.Add(finalized);
+                    }
+                    currentPartial = string.Empty;
+                    break;
+                default:
+                    return;
+            }
+
+            AggregatedText = BuildAggregatedText();
+        }
+    }
+
+    private string BuildAggregatedText()
+    {
+        if (confirmedSegments.Count == 0 && string.IsNullOrEmpty(currentPartial))
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        for (int i = 0; i < confirmedSegments.Count; i++)
+        {
+            string segment = confirmedSegments[i];
+            if (string.IsNullOrEmpty(segment))
+            {
+                continue;
+            }
+            sb.Append(segment);
+        }
+
+        if (!string.IsNullOrEmpty(currentPartial))
+        {
+            sb.Append(currentPartial);
+        }
+
+        return sb.ToString();
+    }
 
     private void Update()
     {

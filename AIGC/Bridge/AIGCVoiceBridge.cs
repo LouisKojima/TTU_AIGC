@@ -5,7 +5,7 @@ using Sirenix.OdinInspector;
 using IAV.AIGC.API; // BlockadeLabsSkyboxApi
 
 // Bridge: wires ChineseRecognizer (ASR) -> Skybox generation (BlockadeLabs)
-// - Realtime: mirrors recognizer.receivedMsg.result to a TMP_Text for live preview
+// - Realtime: mirrors recognizer.AggregatedText to a TMP_Text for live preview
 // - Generate: uses the current text as prompt and calls the provided callback (AIGCManager or SkyboxApi wrapper)
 namespace IAV.AIGC.Bridge
 {
@@ -37,12 +37,12 @@ namespace IAV.AIGC.Bridge
         {
             if (recognizer == null) return;
 
-            // Prefer the structured message result if available
-            string latest = recognizer?.receivedMsg != null ? recognizer.receivedMsg.result : null;
-            if (string.IsNullOrEmpty(latest))
+            // Prefer the running aggregated transcript (FIN history + current MID)
+            string latest = recognizer != null ? recognizer.AggregatedText : string.Empty;
+            if (string.IsNullOrEmpty(latest) && recognizer?.receivedMsg != null)
             {
-                // Fall back to empty when nothing recognized yet
-                latest = string.Empty;
+                // Fall back to the raw result for safety if aggregation has not emitted yet
+                latest = recognizer.receivedMsg.result ?? string.Empty;
             }
 
             // Update UI only when changed to reduce GC/overdraw
