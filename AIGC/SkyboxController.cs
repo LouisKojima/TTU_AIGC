@@ -1,63 +1,91 @@
-using System.IO;
+using System;
 using System.Collections;
+using System.IO;
 using UnityEngine;
 using UnityEngine.Networking;
 
 public class SkyboxController : MonoBehaviour
 {
     [Header("Assign in Inspector")]
-    public Material skyboxMaterial;                   // 直接在 Inspector 指向当前项目的天空盒材质
+    public Material skyboxMaterial;
 
     [Header("Settings")]
-    public string relativeFolder = "SkyboxPreviews";  // StreamingAssets 下的子目录
-    public string texturePropertyName = "_MainTex";   // Skybox/Panoramic 默认主贴图属性
+    public string relativeFolder = "SkyboxPreviews";
+    public string texturePropertyName = "_MainTex";
 
-    /// <summary>
-    /// 从 StreamingAssets/SkyboxPreviews/ 读取 PNG 并应用到天空盒材质。
-    /// 传入文件名（如 "my_skybox.png"）。
-    /// </summary>
+    private Material runtimeMaterial;
+    private Texture2D runtimeTexture;
+
+    private const string LastTextureKey = "SkyboxController.LastTexturePath";
+
+    private void OnEnable()
+    {
+        if (!EnsureRuntimeMaterial())
+        {
+            return;
+        }
+
+        TryRestoreLastSkybox();
+    }
+
+    private void OnDisable()
+    {
+        StopAllCoroutines();
+
+        if (RenderSettings.skybox == runtimeMaterial && skyboxMaterial != null)
+        {
+            RenderSettings.skybox = skyboxMaterial;
+        }
+
+        if (runtimeTexture != null)
+        {
+            Destroy(runtimeTexture);
+            runtimeTexture = null;
+        }
+
+        if (runtimeMaterial != null)
+        {
+            Destroy(runtimeMaterial);
+            runtimeMaterial = null;
+        }
+    }
+
     public void ApplyFromStreamingAssets(string fileName)
     {
         Debug.Log($"[SkyboxController] ApplyFromStreamingAssets file={fileName}");
 
         if (string.IsNullOrEmpty(fileName))
         {
-            Debug.LogWarning("[SkyboxController] fileName 为空。");
+            Debug.LogWarning("[SkyboxController] fileName is empty.");
             return;
         }
+
         string fullPath = Path.Combine(Application.streamingAssetsPath, relativeFolder, fileName);
         StartCoroutine(LoadAndApply(fullPath));
     }
 
-    /// <summary>
-    /// 直接使用完整文件路径（包含后缀）。
-    /// </summary>
     public void ApplyFromFullPath(string fullPath)
     {
         StartCoroutine(LoadAndApply(fullPath));
     }
 
-    /// <summary>
-    /// Button 触发：在 StreamingAssets/<relativeFolder> 下查找最新的一张图片并应用为天空盒。
-    /// 依据文件的 LastWriteTimeUtc 选择最新；支持 .png/.jpg/.jpeg。
-    /// </summary>
     public void ApplyLatestFromStreamingAssets()
     {
         string folder = Path.Combine(Application.streamingAssetsPath, relativeFolder ?? string.Empty);
         if (!Directory.Exists(folder))
         {
-            Debug.LogWarning("[SkyboxController] 目录不存在: " + folder);
+            Debug.LogWarning("[SkyboxController] Folder not found: " + folder);
             return;
         }
 
         string latest = FindLatestImagePath(folder);
         if (string.IsNullOrEmpty(latest))
         {
-            Debug.LogWarning("[SkyboxController] 未找到可用图片 (.png/.jpg/.jpeg)");
+            Debug.LogWarning("[SkyboxController] No image found (.png/.jpg/.jpeg).");
             return;
         }
 
-        Debug.Log("[SkyboxController] 应用最新天空盒: " + latest);
+        Debug.Log("[SkyboxController] Applying latest skybox: " + latest);
         StartCoroutine(LoadAndApply(latest));
     }
 
@@ -67,12 +95,12 @@ public class SkyboxController : MonoBehaviour
         {
             var exts = new string[] { ".png", ".jpg", ".jpeg" };
             string latest = null;
-            System.DateTime latestTime = System.DateTime.MinValue;
+            DateTime latestTime = DateTime.MinValue;
 
             foreach (var file in Directory.GetFiles(folder))
             {
                 var ext = Path.GetExtension(file).ToLowerInvariant();
-                if (System.Array.IndexOf(exts, ext) < 0) continue;
+                if (Array.IndexOf(exts, ext) < 0) continue;
                 var info = new FileInfo(file);
                 var t = info.LastWriteTimeUtc;
                 if (t > latestTime)
@@ -83,75 +111,242 @@ public class SkyboxController : MonoBehaviour
             }
             return latest;
         }
-        catch (System.Exception ex)
+        catch (Exception ex)
         {
-            Debug.LogWarning("[SkyboxController] 查找最新图片失败: " + ex.Message);
+            Debug.LogWarning("[SkyboxController] Failed to choose latest image: " + ex.Message);
             return null;
         }
     }
 
-    private IEnumerator LoadAndApply(string fullPath)
+    private IEnumerator LoadAndApply(string fullPath, bool rememberPath = true)
     {
         Debug.Log($"[SkyboxController] LoadAndApply fullPath={fullPath}");
 
-        if (skyboxMaterial == null)
+        if (!EnsureRuntimeMaterial())
         {
-            Debug.LogError("[SkyboxController] 请在 Inspector 指定 skyboxMaterial。");
-            yield break;
-        }
-        if (!skyboxMaterial.HasProperty(texturePropertyName))
-        {
-            Debug.LogError($"[SkyboxController] 材质不含贴图属性 {texturePropertyName}。");
-            yield break;
-        }
-        if (string.IsNullOrEmpty(fullPath) || !File.Exists(fullPath))
-        {
-            Debug.LogWarning("[SkyboxController] 文件不存在: " + fullPath);
             yield break;
         }
 
-        using (var req = UnityWebRequestTexture.GetTexture("file://" + fullPath))
+        if (!TryNormalizeFullPath(fullPath, out string normalizedPath))
+        {
+            yield break;
+        }
+
+        if (!File.Exists(normalizedPath))
+        {
+            Debug.LogWarning("[SkyboxController] File does not exist: " + normalizedPath);
+            yield break;
+        }
+
+        if (!runtimeMaterial.HasProperty(texturePropertyName))
+        {
+            Debug.LogError("[SkyboxController] Material misses texture property " + texturePropertyName);
+            yield break;
+        }
+
+        using (var req = UnityWebRequestTexture.GetTexture("file://" + normalizedPath))
         {
             yield return req.SendWebRequest();
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogWarning("[SkyboxController] 加载失败: " + fullPath);
+                Debug.LogWarning("[SkyboxController] Load failed: " + normalizedPath);
                 yield break;
             }
 
             var tex = DownloadHandlerTexture.GetContent(req);
             if (tex == null)
             {
-                Debug.LogWarning("[SkyboxController] 纹理为空: " + fullPath);
+                Debug.LogWarning("[SkyboxController] Texture is null: " + normalizedPath);
                 yield break;
             }
 
-            // 可按需调整采样（保持简单即可）
+            if (runtimeTexture != null && runtimeTexture != tex)
+            {
+                Destroy(runtimeTexture);
+            }
+
             tex.wrapMode = TextureWrapMode.Repeat;
             tex.filterMode = FilterMode.Bilinear;
 
-            skyboxMaterial.SetTexture(texturePropertyName, tex);
+            runtimeMaterial.SetTexture(texturePropertyName, tex);
+            runtimeTexture = tex;
 
-            // Normalize skybox material parameters to desired defaults
-            // Tint Color = #CFCFCF, Exposure = 0.7 (when properties exist)
             const string tintProp = "_Tint";
             const string exposureProp = "_Exposure";
-            if (skyboxMaterial.HasProperty(tintProp))
+            if (runtimeMaterial.HasProperty(tintProp))
             {
-                skyboxMaterial.SetColor(tintProp, new Color32(0xCF, 0xCF, 0xCF, 0xFF));
+                runtimeMaterial.SetColor(tintProp, new Color32(0xCF, 0xCF, 0xCF, 0xFF));
             }
-            if (skyboxMaterial.HasProperty(exposureProp))
+            if (runtimeMaterial.HasProperty(exposureProp))
             {
-                skyboxMaterial.SetFloat(exposureProp, 0.7f);
+                runtimeMaterial.SetFloat(exposureProp, 0.7f);
             }
 
-            // 确保当前环境使用该材质（若已设置可省略）
-            if (RenderSettings.skybox != skyboxMaterial)
-                RenderSettings.skybox = skyboxMaterial;
+            if (RenderSettings.skybox != runtimeMaterial)
+            {
+                RenderSettings.skybox = runtimeMaterial;
+            }
 
-            // 立刻刷新环境反射（可选）
             DynamicGI.UpdateEnvironment();
+
+            if (rememberPath)
+            {
+                RememberLastUsedPath(normalizedPath);
+            }
         }
+    }
+
+    private bool EnsureRuntimeMaterial()
+    {
+        if (skyboxMaterial == null)
+        {
+            Debug.LogError("[SkyboxController] Assign skyboxMaterial in Inspector.");
+            return false;
+        }
+
+        if (runtimeMaterial == null)
+        {
+            runtimeMaterial = new Material(skyboxMaterial);
+        }
+
+        if (RenderSettings.skybox != runtimeMaterial)
+        {
+            RenderSettings.skybox = runtimeMaterial;
+        }
+
+        return true;
+    }
+
+    private void TryRestoreLastSkybox()
+    {
+        string storedValue = PlayerPrefs.GetString(LastTextureKey, string.Empty);
+        if (string.IsNullOrEmpty(storedValue))
+        {
+            return;
+        }
+
+        string resolvedPath = ResolveStoredPath(storedValue);
+        if (string.IsNullOrEmpty(resolvedPath))
+        {
+            PlayerPrefs.DeleteKey(LastTextureKey);
+            return;
+        }
+
+        if (!File.Exists(resolvedPath))
+        {
+            Debug.LogWarning("[SkyboxController] Stored skybox file missing: " + resolvedPath);
+            PlayerPrefs.DeleteKey(LastTextureKey);
+            return;
+        }
+
+        StartCoroutine(LoadAndApply(resolvedPath, false));
+    }
+
+    private void RememberLastUsedPath(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath))
+        {
+            return;
+        }
+
+        string normalizedPath;
+        try
+        {
+            normalizedPath = Path.GetFullPath(fullPath);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[SkyboxController] Failed to cache skybox path: " + ex.Message);
+            return;
+        }
+
+        string value = "abs:" + normalizedPath;
+        string streamingPath = Application.streamingAssetsPath;
+
+        if (!string.IsNullOrEmpty(streamingPath))
+        {
+            try
+            {
+                var normalizedStreaming = Path.GetFullPath(streamingPath)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+                if (normalizedPath.StartsWith(normalizedStreaming, StringComparison.OrdinalIgnoreCase))
+                {
+                    string relative = normalizedPath.Substring(normalizedStreaming.Length)
+                        .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    value = "rel:" + relative.Replace(Path.DirectorySeparatorChar, '/');
+                }
+            }
+            catch (Exception)
+            {
+                // ignore normalization failure, fall back to absolute
+            }
+        }
+
+        PlayerPrefs.SetString(LastTextureKey, value);
+        PlayerPrefs.Save();
+    }
+
+    private string ResolveStoredPath(string storedValue)
+    {
+        if (string.IsNullOrEmpty(storedValue))
+        {
+            return null;
+        }
+
+        if (storedValue.StartsWith("rel:", StringComparison.Ordinal))
+        {
+            string relative = storedValue.Substring(4).TrimStart('/', '\\');
+            string basePath = Application.streamingAssetsPath;
+            if (string.IsNullOrEmpty(basePath))
+            {
+                return null;
+            }
+
+            return Path.Combine(basePath, relative.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        if (storedValue.StartsWith("abs:", StringComparison.Ordinal))
+        {
+            return storedValue.Substring(4);
+        }
+
+        return storedValue;
+    }
+
+    private bool TryNormalizeFullPath(string path, out string normalizedPath)
+    {
+        normalizedPath = null;
+
+        if (string.IsNullOrEmpty(path))
+        {
+            Debug.LogWarning("[SkyboxController] Path is empty.");
+            return false;
+        }
+
+        string stripped = StripFileUriPrefix(path);
+
+        try
+        {
+            normalizedPath = Path.GetFullPath(stripped);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[SkyboxController] Path normalization failed: " + stripped + " (" + ex.Message + ")");
+            return false;
+        }
+    }
+
+    private static string StripFileUriPrefix(string path)
+    {
+        const string prefix = "file://";
+        if (!string.IsNullOrEmpty(path) && path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return path.Substring(prefix.Length);
+        }
+
+        return path;
     }
 }
